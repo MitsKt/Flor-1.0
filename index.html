@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -37,6 +37,8 @@
       font-size: 14px;
       letter-spacing: 1px;
       pointer-events: none;
+      text-align: center;
+      width: 100%;
     }
   </style>
 </head>
@@ -49,14 +51,14 @@
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
 
-    let width = canvas.width = document.documentElement.clientWidth;
-    let height = canvas.height = document.documentElement.clientHeight;
+    let width = canvas.width = window.innerWidth;
+    let height = canvas.height = window.innerHeight;
 
     let initialBuildProgress = 0.0005;
 
     window.addEventListener('resize', () => {
-      width = canvas.width = document.documentElement.clientWidth;
-      height = canvas.height = document.documentElement.clientHeight;
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
       init();
     });
 
@@ -101,13 +103,16 @@
         this.accY = 0;
         this.friction = 0.93;
         this.ease = 0.015;
+        this.isTextParticle = false;
+        this.isExtra = false;
       }
 
       draw() {
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
         ctx.fillStyle = this.color;
-        ctx.shadowBlur = 8;
+        
+        ctx.shadowBlur = (currentState === 'text' && this.isTextParticle) ? 2 : 8;
         ctx.shadowColor = this.color;
         ctx.fill();
       }
@@ -133,8 +138,11 @@
           }
         }
 
-        this.vx = (this.vx + this.accX) * this.friction;
-        this.vy = (this.vy + this.accY) * this.friction;
+        // Fricción adaptativa: mayor fricción para el texto evita oscilaciones y bamboleo
+        let effectiveFriction = (currentState === 'text' && this.isTextParticle) ? 0.82 : this.friction;
+
+        this.vx = (this.vx + this.accX) * effectiveFriction;
+        this.vy = (this.vy + this.accY) * effectiveFriction;
 
         this.x += this.vx;
         this.y += this.vy;
@@ -188,7 +196,7 @@
         let u = Math.random();
         let angle = Math.random() * Math.PI * 2;
         
-        let petalShape = Math.abs(Math.cos((numPetals / 2) * angle)) * 140 + 30;
+        let petalShape = Math.abs(Math.cos((numPetals / 2) * angle)) * Math.min(width * 0.35, 140) + 30;
         let r = u * petalShape;
 
         let px = centerX + r * Math.cos(angle);
@@ -215,7 +223,7 @@
 
       for (let i = 0; i < 300; i++) {
         let t = Math.random();
-        let lx = centerX + (t * 60) + Math.sin(t * Math.PI) * 15;
+        let lx = centerX + (t * 50) + Math.sin(t * Math.PI) * 15;
         let ly = centerY + 120 + (t * 30);
         points.push({
           x: lx,
@@ -237,7 +245,8 @@
       const lines = [];
       let currentLine = words[0];
 
-      const maxCharsPerLine = Math.max(12, Math.floor(width / 25));
+      const isMobile = width < 600;
+      const maxCharsPerLine = isMobile ? 12 : 24;
 
       for (let i = 1; i < words.length; i++) {
         if ((currentLine + " " + words[i]).length <= maxCharsPerLine) {
@@ -250,10 +259,17 @@
       lines.push(currentLine);
 
       let maxLineLength = Math.max(...lines.map(l => l.length));
-      const fontSize = Math.min(width / (maxLineLength * 0.65), height / (lines.length * 2.2), 55);
-      const lineHeight = fontSize * 1.25;
+      
+      let fontSize = Math.min(width / (maxLineLength * 0.65), (height * 0.75) / (lines.length * 1.5));
+      if (isMobile) {
+        fontSize = Math.max(fontSize, 18);
+      } else {
+        fontSize = Math.min(fontSize, 46);
+      }
 
-      offCtx.font = `bold ${fontSize}px sans-serif`;
+      const lineHeight = fontSize * 1.35;
+
+      offCtx.font = `900 ${fontSize}px sans-serif`;
       offCtx.textAlign = 'center';
       offCtx.textBaseline = 'middle';
       offCtx.fillStyle = 'white';
@@ -265,7 +281,8 @@
 
       const imgData = offCtx.getImageData(0, 0, width, height).data;
       const points = [];
-      const step = 4;
+      
+      const step = isMobile ? 3 : Math.max(2, Math.floor(fontSize / 10));
 
       for (let y = 0; y < height; y += step) {
         for (let x = 0; x < width; x += step) {
@@ -287,13 +304,23 @@
 
       const textPoints = generateTextPoints(activeSequence[currentWordIndex]);
 
+      // Asegurar cantidad de partículas necesarias para que no falten en móviles
+      while (particles.length < textPoints.length) {
+        let p = new Particle(Math.random() * width, Math.random() * height, '#ffeb3b');
+        p.isExtra = true;
+        particles.push(p);
+      }
+
       particles.forEach((p, i) => {
         if (i < textPoints.length) {
           p.targetX = textPoints[i].x;
           p.targetY = textPoints[i].y;
+          p.isTextParticle = true;
         } else {
-          p.targetX = width / 2 + (Math.random() - 0.5) * (width * 0.8);
-          p.targetY = height / 2 + (Math.random() - 0.5) * (height * 0.8);
+          // Si sobran partículas, flotan suavemente en posiciones dispersas del fondo
+          p.targetX = Math.random() * width;
+          p.targetY = Math.random() * height;
+          p.isTextParticle = false;
         }
       });
 
@@ -316,9 +343,15 @@
       canInteractToReturn = false;
       clearTimeout(autoTextTimer);
 
+      // Eliminar partículas extra creadas para el texto
+      particles = particles.filter(p => !p.isExtra);
+
       particles.forEach((p, i) => {
-        p.targetX = particlePointsFlower[i].x;
-        p.targetY = particlePointsFlower[i].y;
+        if (particlePointsFlower[i]) {
+          p.targetX = particlePointsFlower[i].x;
+          p.targetY = particlePointsFlower[i].y;
+        }
+        p.isTextParticle = false;
       });
 
       startInitialTimer();
