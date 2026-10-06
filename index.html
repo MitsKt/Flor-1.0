@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>Flor de Partículas Amarillas</title>
   <style>
     * {
@@ -58,23 +61,25 @@
     });
 
     const mouse = { x: null, y: null, radius: 100 };
-    window.addEventListener('mousemove', (e) => {
-      mouse.x = e.clientX;
-      mouse.y = e.clientY;
-    });
+    
+    function registerInput(e) {
+      if (e.touches && e.touches.length > 0) {
+        mouse.x = e.touches[0].clientX;
+        mouse.y = e.touches[0].clientY;
+      } else if (e.clientX !== undefined) {
+        mouse.x = e.clientX;
+        mouse.y = e.clientY;
+      }
+      handleUserInteraction();
+    }
 
+    window.addEventListener('mousemove', registerInput);
     window.addEventListener('mouseleave', () => {
       mouse.x = null;
       mouse.y = null;
     });
 
-    window.addEventListener('touchmove', (e) => {
-      if (e.touches.length > 0) {
-        mouse.x = e.touches[0].clientX;
-        mouse.y = e.touches[0].clientY;
-      }
-    }, { passive: true });
-
+    window.addEventListener('touchmove', registerInput, { passive: true });
     window.addEventListener('touchend', () => {
       mouse.x = null;
       mouse.y = null;
@@ -138,6 +143,29 @@
 
     let particles = [];
 
+    const defaultWordSequence = [
+      "Comienza una nueva estación, y con ella te regalo una parte de mí",
+      "Si estás leyendo esto, es porque te tomaste el tiempo suficiente con la flor, gracias por eso",
+      "Como una flor real, puedes verlo siempre que quieras",
+      "Somos complicados, pero lo intentamos",
+      "Aunque nos pinchen las espinas",
+      "Cuando te sientas mal, ven y riégala",
+      "Quizá cambie con el tiempo, igual que nosotros"
+    ];
+
+    let activeSequence = [...defaultWordSequence];
+
+    let currentState = 'flower';
+    let currentWordIndex = 0;
+    let initialTimeLimitSeconds = 30;
+    let textDurationSeconds = 7;
+    let cooldownSeconds = 3;
+    let canInteractToReturn = false;
+
+    let autoTextTimer = null;
+    let initialTimer = null;
+    let particlePointsFlower = [];
+
     function generateFlowerPoints() {
       const points = [];
       const centerX = width / 2;
@@ -199,13 +227,142 @@
       return points;
     }
 
+    function generateTextPoints(text) {
+      const offCanvas = document.createElement('canvas');
+      const offCtx = offCanvas.getContext('2d');
+      offCanvas.width = width;
+      offCanvas.height = height;
+
+      const words = text.split(' ');
+      const lines = [];
+      let currentLine = words[0];
+
+      const maxCharsPerLine = Math.max(12, Math.floor(width / 25));
+
+      for (let i = 1; i < words.length; i++) {
+        if ((currentLine + " " + words[i]).length <= maxCharsPerLine) {
+          currentLine += " " + words[i];
+        } else {
+          lines.push(currentLine);
+          currentLine = words[i];
+        }
+      }
+      lines.push(currentLine);
+
+      let maxLineLength = Math.max(...lines.map(l => l.length));
+      const fontSize = Math.min(width / (maxLineLength * 0.65), height / (lines.length * 2.2), 55);
+      const lineHeight = fontSize * 1.25;
+
+      offCtx.font = `bold ${fontSize}px sans-serif`;
+      offCtx.textAlign = 'center';
+      offCtx.textBaseline = 'middle';
+      offCtx.fillStyle = 'white';
+
+      const startY = (height / 2) - ((lines.length - 1) * lineHeight) / 2;
+      lines.forEach((line, index) => {
+        offCtx.fillText(line, width / 2, startY + (index * lineHeight));
+      });
+
+      const imgData = offCtx.getImageData(0, 0, width, height).data;
+      const points = [];
+      const step = 4;
+
+      for (let y = 0; y < height; y += step) {
+        for (let x = 0; x < width; x += step) {
+          const index = (y * width + x) * 4;
+          if (imgData[index + 3] > 128) {
+            points.push({ x, y });
+          }
+        }
+      }
+      return points;
+    }
+
+    function showText(index) {
+      currentState = 'text';
+      currentWordIndex = index;
+      canInteractToReturn = false;
+      
+      clearTimeout(autoTextTimer);
+
+      const textPoints = generateTextPoints(activeSequence[currentWordIndex]);
+
+      particles.forEach((p, i) => {
+        if (i < textPoints.length) {
+          p.targetX = textPoints[i].x;
+          p.targetY = textPoints[i].y;
+        } else {
+          p.targetX = width / 2 + (Math.random() - 0.5) * (width * 0.8);
+          p.targetY = height / 2 + (Math.random() - 0.5) * (height * 0.8);
+        }
+      });
+
+      setTimeout(() => {
+        canInteractToReturn = true;
+      }, cooldownSeconds * 1000);
+
+      autoTextTimer = setTimeout(() => {
+        let nextIndex = currentWordIndex + 1;
+        if (nextIndex < activeSequence.length) {
+          showText(nextIndex);
+        } else {
+          transitionToFlower();
+        }
+      }, textDurationSeconds * 1000);
+    }
+
+    function transitionToFlower() {
+      currentState = 'flower';
+      canInteractToReturn = false;
+      clearTimeout(autoTextTimer);
+
+      particles.forEach((p, i) => {
+        p.targetX = particlePointsFlower[i].x;
+        p.targetY = particlePointsFlower[i].y;
+      });
+
+      startInitialTimer();
+    }
+
+    function handleUserInteraction() {
+      if (currentState === 'text' && canInteractToReturn) {
+        transitionToFlower();
+      }
+    }
+
+    function startInitialTimer() {
+      clearTimeout(initialTimer);
+
+      const today = new Date();
+      const isExamDay = (today.getDate() === 8 && (today.getMonth() + 1) === 10);
+
+      let delaySeconds = initialTimeLimitSeconds;
+
+      if (isExamDay) {
+        delaySeconds = 4;
+        activeSequence = ["¡Ánimos en el examen!"];
+      } else {
+        activeSequence = [...defaultWordSequence];
+      }
+
+      initialTimer = setTimeout(() => {
+        if (currentState === 'flower') {
+          showText(0);
+        }
+      }, delaySeconds * 1000);
+    }
+
+    window.addEventListener('click', handleUserInteraction);
+
     function init() {
       initialBuildProgress = 0.0005;
       particles = [];
       const points = generateFlowerPoints();
+      particlePointsFlower = points;
       points.forEach(pt => {
         particles.push(new Particle(pt.x, pt.y, pt.color));
       });
+      transitionToFlower();
     }
 
     function animate() {
